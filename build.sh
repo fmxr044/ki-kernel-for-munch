@@ -2,7 +2,7 @@
 # Ki-Kernel Build Script for munch (sm8250 / kona) only
 # Supports: AOSP / Custom ROM, MIUI / HyperOS, ColorOS / OxygenOS
 # Usage: bash build.sh <target_device> [variant] [target_os]
-#   variant   : ksu (default) | nosusfs | noksu
+#   variant   : ksu (default) | noksu
 #   target_os : aosp (default) | miui | coloros | both
 
 set -e
@@ -21,12 +21,12 @@ if [ -z "$1" ]; then
     echo ""
     echo "Arguments:"
     echo "  target_device : munch (sm8250) — 本树只保留 munch"
-    echo "  variant       : nosusfs (default, ReSukiSU 无 SuSFS) | noksu"
+    echo "  variant       : ksu (default, ReSukiSU) | noksu"
     echo "  target_os     : aosp (default) | miui | both (AOSP + MIUI/HyperOS)"
     echo ""
     echo "Examples:"
-    echo "  bash build.sh munch nosusfs aosp # ReSukiSU 无 SuSFS + AOSP"
-    echo "  bash build.sh munch nosusfs miui # ReSukiSU 无 SuSFS + MIUI/HyperOS"
+    echo "  bash build.sh munch ksu aosp     # ReSukiSU + AOSP"
+    echo "  bash build.sh munch ksu miui     # ReSukiSU + MIUI/HyperOS"
     echo "  bash build.sh munch noksu both   # 无 Root + 双版本"
     
     echo "=========================================================="
@@ -105,24 +105,21 @@ fi
 echo "[clang --version]:"
 clang --version
 
-# Parse Variant (只支持：nosusfs = ReSukiSU 无 SuSFS，noksu = 无 Root)
+# Parse Variant (只支持：ksu = ReSukiSU，noksu = 无 Root)
 KSU_ENABLE=1
-SUSFS_ENABLE=0
 VARIANT_TAG="KSU"
 
 case "$2" in
     ""|nosusfs|ksu|ksu-nosusfs|plain|onlyksu|ksu-only|only-ksu)
         KSU_ENABLE=1
-        SUSFS_ENABLE=0
         VARIANT_TAG="KSU"
         ;;
     noksu|vanilla|none|no-ksu)
         KSU_ENABLE=0
-        SUSFS_ENABLE=0
         VARIANT_TAG="NOKSU"
         ;;
     *)
-        echo "Unknown variant: $2. 本树只支持 nosusfs / noksu。"
+        echo "Unknown variant: $2. 本树只支持 ksu / noksu。"
         exit 1
         ;;
 esac
@@ -153,75 +150,14 @@ apply_ksu_config() {
             -e KSU_THRONE_TRACKER_ALWAYS_THREADED \
             -d KSU_ALLOWLIST_WORKAROUND \
             -e KSU_LSM_SECURITY_HOOKS \
-            -d KSU_MANUAL_HOOK \
+            -e KSU_MANUAL_HOOK \
+            -d KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
             -e KSU_MULTI_MANAGER_SUPPORT
-
-        if [ $SUSFS_ENABLE -eq 1 ]; then
-            scripts/config --file out/.config \
-                -e KSU_SUSFS \
-                -d KSU_MANUAL_HOOK \
-                -d KSU_TRACEPOINT_HOOK \
-                -e KSU_SUSFS_SUS_PATH \
-                -e KSU_SUSFS_SUS_MAP \
-                -e KSU_SUSFS_SUS_NETLINK \
-                -e KSU_SUSFS_AUTO_ADD_SUS_KSURULES \
-                -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-                -e KSU_SUSFS_SUS_SU \
-                -e KSU_SUSFS_SUS_MOUNT \
-                -e KSU_SUSFS_SUS_KSTAT \
-                -d KSU_SUSFS_SPOOF_UNAME \
-                -e KSU_SUSFS_ENABLE_LOG \
-                -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-                -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-                -e KSU_SUSFS_OPEN_REDIRECT \
-                -e KSU_SUSFS_SUS_OVERLAYFS \
-                -e KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING \
-                -e KSU_SUSFS_PRIORITY_UID_FILTER
-        else
-            scripts/config --file out/.config \
-                -e KSU_MANUAL_HOOK \
-                -d KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
-                -d KSU_TRACEPOINT_HOOK \
-                -d KSU_SUSFS \
-                -d KSU_SUSFS_SUS_PATH \
-                -d KSU_SUSFS_SUS_MAP \
-                -d KSU_SUSFS_SUS_NETLINK \
-                -d KSU_SUSFS_AUTO_ADD_SUS_KSURULES \
-                -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-                -d KSU_SUSFS_SUS_SU \
-                -d KSU_SUSFS_SUS_MOUNT \
-                -d KSU_SUSFS_SUS_KSTAT \
-                -d KSU_SUSFS_SPOOF_UNAME \
-                -d KSU_SUSFS_ENABLE_LOG \
-                -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-                -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-                -d KSU_SUSFS_OPEN_REDIRECT \
-                -d KSU_SUSFS_SUS_OVERLAYFS \
-                -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING \
-                -d KSU_SUSFS_PRIORITY_UID_FILTER
-        fi
     else
         scripts/config --file out/.config \
             -d KSU \
             -d KSU_MANUAL_HOOK \
-            -d KSU_TRACEPOINT_HOOK \
-            -d KSU_SUSFS \
-            -d KSU_SUSFS_SUS_PATH \
-            -d KSU_SUSFS_SUS_MAP \
-            -d KSU_SUSFS_SUS_NETLINK \
-            -d KSU_SUSFS_AUTO_ADD_SUS_KSURULES \
-            -d KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-            -d KSU_SUSFS_SUS_SU \
-            -d KSU_SUSFS_SUS_MOUNT \
-            -d KSU_SUSFS_SUS_KSTAT \
-            -d KSU_SUSFS_SPOOF_UNAME \
-            -d KSU_SUSFS_ENABLE_LOG \
-            -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            -d KSU_SUSFS_OPEN_REDIRECT \
-            -d KSU_SUSFS_SUS_OVERLAYFS \
-            -d KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING \
-            -d KSU_SUSFS_PRIORITY_UID_FILTER
+            -d KSU_TRACEPOINT_HOOK
     fi
 }
 

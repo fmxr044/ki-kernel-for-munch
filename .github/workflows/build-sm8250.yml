@@ -6,11 +6,11 @@ on:
       variant:
         description: 'Root 变体'
         required: true
-        default: 'nosusfs - ReSukiSU (无 SuSFS)'
+        default: 'ksu - ReSukiSU'
         type: choice
         options:
-          - 'both - 两个都编 (ReSukiSU 无 SuSFS + 无 Root)'
-          - 'nosusfs - ReSukiSU (无 SuSFS)'
+          - 'both - 两个都编 (ReSukiSU + 无 Root)'
+          - 'ksu - ReSukiSU'
           - 'noksu - 无 Root'
       target_os:
         description: 'Target OS'
@@ -38,7 +38,7 @@ jobs:
         run: |
           CHOSEN_VAR=$(echo "${{ inputs.variant }}" | awk '{print $1}')
           if [ "$CHOSEN_VAR" = "both" ]; then
-            echo 'variants=["nosusfs","noksu"]' >> $GITHUB_OUTPUT
+            echo 'variants=["ksu","noksu"]' >> $GITHUB_OUTPUT
           else
             echo "variants=[\"$CHOSEN_VAR\"]" >> $GITHUB_OUTPUT
           fi
@@ -67,18 +67,12 @@ jobs:
           ref: ${{ inputs.branch }}
           fetch-depth: 1
 
-      - name: 准备外部模块 (BakaSU / NoMount / Baseband-guard)
+      - name: 集成 ReSukiSU (KernelSU)
         run: |
-          rm -rf KernelSU
-          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git KernelSU
-          if [ -f ".github/ci-patches/bakasu.patch" ]; then
-            cd KernelSU
-            git apply ../.github/ci-patches/bakasu.patch || echo "BakaSU patch applied with fallback"
-            cd ..
-          fi
-          mkdir -p drivers
-          ln -sf ../KernelSU/kernel drivers/kernelsu
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
 
+      - name: 准备外部模块 (NoMount / Baseband-guard)
+        run: |
           rm -rf NoMount
           git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git NoMount || \
           git clone --depth=1 https://github.com/maxsteeel/nomount.git NoMount

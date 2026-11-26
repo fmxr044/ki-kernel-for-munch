@@ -91,9 +91,6 @@ int ioprio_check_cap(int ioprio)
 	return 0;
 }
 
-#ifdef CONFIG_KSU_SUSFS
-extern bool susfs_is_priority_uid_filtered(uid_t uid);
-#endif // #ifdef CONFIG_KSU_SUSFS
 
 SYSCALL_DEFINE3(ioprio_set, int, which, int, who, int, ioprio)
 {
@@ -137,10 +134,6 @@ SYSCALL_DEFINE3(ioprio_set, int, which, int, who, int, ioprio)
 				user = current_user();
 			else
 			{
-#ifdef CONFIG_KSU_SUSFS
-				if (current_uid().val >= 10000 && susfs_is_priority_uid_filtered(uid.val))
-					break;
-#endif // #ifdef CONFIG_KSU_SUSFS
 				if (fgetpriority_is_blocked(current_uid().val, uid.val))
 					break;
 				user = find_user(uid);
@@ -238,10 +231,6 @@ SYSCALL_DEFINE2(ioprio_get, int, which, int, who)
 				user = current_user();
 			else
 			{
-#ifdef CONFIG_KSU_SUSFS
-				if (current_uid().val >= 10000 && susfs_is_priority_uid_filtered(uid.val))
-					break;
-#endif // #ifdef CONFIG_KSU_SUSFS
 				if (fgetpriority_is_blocked(current_uid().val, uid.val))
 					break;
 				user = find_user(uid);
