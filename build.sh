@@ -1,6 +1,6 @@
 #!/bin/bash
-# Universal Ki-Kernel Build Script for SM8250 (munch / alioth / etc.)
-# Supports: AOSP / Custom ROM, MIUI / HyperOS, & ColorOS / OxygenOS
+# Ki-Kernel Build Script for munch (sm8250 / kona) only
+# Supports: AOSP / Custom ROM, MIUI / HyperOS, ColorOS / OxygenOS
 # Usage: bash build.sh <target_device> [variant] [target_os]
 #   variant   : ksu (default) | nosusfs | noksu
 #   target_os : aosp (default) | miui | coloros | both
@@ -20,15 +20,15 @@ if [ -z "$1" ]; then
     echo "Usage: bash build.sh <target_device> [variant] [target_os]"
     echo ""
     echo "Arguments:"
-    echo "  target_device : munch, alioth, apollo, lmi, umi, etc."
-    echo "  variant       : ksu (default) | nosusfs | noksu"
-    echo "  target_os     : aosp (default) | miui | coloros (or oplus/oos) | both"
+    echo "  target_device : munch (sm8250) — 本树只保留 munch"
+    echo "  variant       : nosusfs (default, ReSukiSU 无 SuSFS) | noksu"
+    echo "  target_os     : aosp (default) | miui | both (AOSP + MIUI/HyperOS)"
     echo ""
     echo "Examples:"
-    echo "  bash build.sh munch ksu aosp     # Build AOSP with ReSukiSU + SuSFS"
-    echo "  bash build.sh munch ksu miui     # Build MIUI/HyperOS with ReSukiSU + SuSFS"
-    echo "  bash build.sh munch ksu coloros  # Build ColorOS/OxygenOS/RealmeUI with ReSukiSU + SuSFS"
-    echo "  bash build.sh munch ksu both     # Build Universal Dual-OS zip"
+    echo "  bash build.sh munch nosusfs aosp # ReSukiSU 无 SuSFS + AOSP"
+    echo "  bash build.sh munch nosusfs miui # ReSukiSU 无 SuSFS + MIUI/HyperOS"
+    echo "  bash build.sh munch noksu both   # 无 Root + 双版本"
+    
     echo "=========================================================="
     exit 1
 fi
@@ -92,6 +92,11 @@ export KBUILD_BUILD_HOST="build-host 4.19.404R"
 
 MAKE_ARGS="ARCH=arm64 SUBARCH=arm64 O=out CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip HOSTCC=$PWD/tools/hostcc HOSTLD=/usr/bin/ld.bfd CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
 
+if [ "$TARGET_DEVICE" != "munch" ]; then
+    echo "Error: 本树已净化为 munch 专用，只接受 target_device=munch（收到: $TARGET_DEVICE）"
+    exit 1
+fi
+
 if [ ! -f "arch/arm64/configs/${TARGET_DEVICE}_defconfig" ]; then
     echo "Error: arch/arm64/configs/${TARGET_DEVICE}_defconfig not found."
     exit 1
@@ -100,18 +105,13 @@ fi
 echo "[clang --version]:"
 clang --version
 
-# Parse Variant (Root / SuSFS)
+# Parse Variant (只支持：nosusfs = ReSukiSU 无 SuSFS，noksu = 无 Root)
 KSU_ENABLE=1
-SUSFS_ENABLE=1
-VARIANT_TAG="KSU+SUSFS"
+SUSFS_ENABLE=0
+VARIANT_TAG="KSU"
 
 case "$2" in
-    ksu|ksu-susfs|susfs|"")
-        KSU_ENABLE=1
-        SUSFS_ENABLE=1
-        VARIANT_TAG="KSU+SUSFS"
-        ;;
-    ksu-nosusfs|nosusfs|plain|onlyksu|ksu-only|only-ksu)
+    ""|nosusfs|ksu|ksu-nosusfs|plain|onlyksu|ksu-only|only-ksu)
         KSU_ENABLE=1
         SUSFS_ENABLE=0
         VARIANT_TAG="KSU"
@@ -122,10 +122,8 @@ case "$2" in
         VARIANT_TAG="NOKSU"
         ;;
     *)
-        echo "Unknown variant: $2. Defaulting to KSU+SUSFS."
-        KSU_ENABLE=1
-        SUSFS_ENABLE=1
-        VARIANT_TAG="KSU+SUSFS"
+        echo "Unknown variant: $2. 本树只支持 nosusfs / noksu。"
+        exit 1
         ;;
 esac
 

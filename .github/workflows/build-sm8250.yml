@@ -1,81 +1,44 @@
-name: Build SM8250 Kernel
+name: Build munch (SM8250)
 
 on:
   workflow_dispatch:
     inputs:
-      device:
-        description: 'Pilih Target Device SM8250'
-        required: true
-        default: 'munch - POCO F4 / Redmi K40S'
-        type: choice
-        options:
-          - 'munch - POCO F4 / Redmi K40S'
-          - 'popular - Alioth (POCO F3) & LMI (POCO F2 Pro)'
-          - 'alioth - POCO F3 / Redmi K40'
-          - 'lmi - POCO F2 Pro / Redmi K30 Pro'
-          - 'all - Semua Device Non-F4 Sekaligus (12 Device)'
-          - 'apollo - Mi 10T / Mi 10T Pro'
-          - 'thyme - Mi 10S'
-          - 'umi - Mi 10'
-          - 'cmi - Mi 10 Pro'
-          - 'cas - Mi 10 Ultra'
-          - 'pipa - Xiaomi Pad 6'
-          - 'psyche - Xiaomi 12X'
-          - 'dagu - Xiaomi Pad 5 Pro 12.4'
-          - 'elish - Xiaomi Pad 5 Pro WiFi'
-          - 'enuma - Xiaomi Pad 5 Pro 5G'
       variant:
-        description: 'Varian Root'
+        description: 'Root 变体'
         required: true
-        default: 'all - Semua Varian (KSU+SUSFS, KSU, NOKSU)'
+        default: 'nosusfs - ReSukiSU (无 SuSFS)'
         type: choice
         options:
-          - 'all - Semua Varian (KSU+SUSFS, KSU, NOKSU)'
-          - 'ksu - ReSukiSU + SuSFS v2.3.0'
-          - 'nosusfs - ReSukiSU Only (Tanpa SuSFS)'
-          - 'noksu - Vanilla Non-Root'
+          - 'both - 两个都编 (ReSukiSU 无 SuSFS + 无 Root)'
+          - 'nosusfs - ReSukiSU (无 SuSFS)'
+          - 'noksu - 无 Root'
       target_os:
         description: 'Target OS'
         required: true
-        default: 'both - Universal Dual-OS (AOSP & MIUI)'
+        default: 'both - 通用双版本 (AOSP & MIUI/HyperOS)'
         type: choice
         options:
-          - 'both - Universal Dual-OS (AOSP & MIUI)'
-          - 'aosp - AOSP Only'
-          - 'miui - MIUI / HyperOS Only'
-          - 'coloros - ColorOS / OxygenOS'
+          - 'both - 通用双版本 (AOSP & MIUI/HyperOS)'
+          - 'aosp - 仅 AOSP'
+          - 'miui - 仅 MIUI / HyperOS'
       branch:
-        description: 'Branch Kernel'
+        description: '分支'
         required: true
-        default: 'beta-test'
-      telegram_topic:
-        description: 'ID Topik Telegram (default: 4 untuk Discussion)'
-        required: false
-        default: '4'
+        default: 'main'
 
 jobs:
   setup:
-    name: Prepare Build Matrix
+    name: 准备构建矩阵
     runs-on: ubuntu-latest
     outputs:
-      devices: ${{ steps.set-matrix.outputs.devices }}
       variants: ${{ steps.set-matrix.outputs.variants }}
       target_os: ${{ steps.set-matrix.outputs.target_os }}
     steps:
       - id: set-matrix
         run: |
-          CHOSEN_DEV=$(echo "${{ inputs.device }}" | awk '{print $1}')
-          if [ "$CHOSEN_DEV" = "popular" ]; then
-            echo 'devices=["alioth","lmi"]' >> $GITHUB_OUTPUT
-          elif [ "$CHOSEN_DEV" = "all" ]; then
-            echo 'devices=["alioth","apollo","thyme","lmi","umi","cmi","cas","pipa","psyche","dagu","elish","enuma"]' >> $GITHUB_OUTPUT
-          else
-            echo "devices=[\"$CHOSEN_DEV\"]" >> $GITHUB_OUTPUT
-          fi
-
           CHOSEN_VAR=$(echo "${{ inputs.variant }}" | awk '{print $1}')
-          if [ "$CHOSEN_VAR" = "all" ]; then
-            echo 'variants=["ksu","nosusfs","noksu"]' >> $GITHUB_OUTPUT
+          if [ "$CHOSEN_VAR" = "both" ]; then
+            echo 'variants=["nosusfs","noksu"]' >> $GITHUB_OUTPUT
           else
             echo "variants=[\"$CHOSEN_VAR\"]" >> $GITHUB_OUTPUT
           fi
@@ -83,47 +46,29 @@ jobs:
           CHOSEN_OS=$(echo "${{ inputs.target_os }}" | awk '{print $1}')
           echo "target_os=$CHOSEN_OS" >> $GITHUB_OUTPUT
 
-      - name: Cache ZyCromerZ Clang
-        id: cache-clang
-        uses: actions/cache@v4
-        with:
-          path: /home/runner/zyc-clang
-          key: zyc-clang-16.0.6-20260807
-
-      - name: Pre-download ZyCromerZ Clang 16
-        if: steps.cache-clang.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p $HOME/zyc-clang
-          cd $HOME/zyc-clang
-          curl -fSL --retry 5 --retry-delay 5 --retry-all-errors https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz -o Clang.tar.gz
-          tar -xf Clang.tar.gz
-          rm -f Clang.tar.gz
-
   build:
-    name: Build (${{ matrix.device }} - ${{ matrix.variant }})
+    name: Build (munch - ${{ matrix.variant }})
     needs: setup
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        device: ${{ fromJson(needs.setup.outputs.devices) }}
         variant: ${{ fromJson(needs.setup.outputs.variants) }}
 
     steps:
-      - name: Free Disk Space
+      - name: 释放磁盘空间
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
           sudo apt-get clean
 
-      - name: Checkout Kernel Source
+      - name: 检出内核源码
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 1
 
-      - name: Setup External Modules (BakaSU, NoMount, Baseband-guard)
+      - name: 准备外部模块 (BakaSU / NoMount / Baseband-guard)
         run: |
-          # 1. Setup KernelSU (BakaSU)
           rm -rf KernelSU
           git clone --depth=1 https://github.com/Baka-SU/BakaSU.git KernelSU
           if [ -f ".github/ci-patches/bakasu.patch" ]; then
@@ -134,20 +79,18 @@ jobs:
           mkdir -p drivers
           ln -sf ../KernelSU/kernel drivers/kernelsu
 
-          # 2. Setup NoMount
           rm -rf NoMount
           git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git NoMount || \
           git clone --depth=1 https://github.com/maxsteeel/nomount.git NoMount
           mkdir -p fs
           ln -sf ../NoMount/kernel/src fs/nomount
 
-          # 3. Setup Baseband-guard
           rm -rf Baseband-guard
           git clone --depth=1 https://github.com/vc-teahouse/Baseband-guard.git Baseband-guard
           mkdir -p security
           ln -sf ../Baseband-guard security/baseband-guard
 
-      - name: Install Dependencies & Cross Compilers
+      - name: 安装依赖与交叉工具链
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison build-essential ccache curl flex \
@@ -155,14 +98,14 @@ jobs:
             gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
             libssl-dev libelf-dev zip python3 python3-pip
 
-      - name: Restore ZyCromerZ Clang Cache
+      - name: 缓存 Clang 16
         id: cache-clang
         uses: actions/cache@v4
         with:
           path: /home/runner/zyc-clang
           key: zyc-clang-16.0.6-20260807
 
-      - name: Setup ZyCromerZ Clang 16 (Fallback)
+      - name: 下载 Clang 16
         if: steps.cache-clang.outputs.cache-hit != 'true'
         run: |
           mkdir -p $HOME/zyc-clang
@@ -171,132 +114,17 @@ jobs:
           tar -xf Clang.tar.gz
           rm -f Clang.tar.gz
 
-      - name: Compile Kernel (${{ matrix.device }} - ${{ matrix.variant }})
+      - name: 编译内核 (munch - ${{ matrix.variant }})
         run: |
           export PATH="$HOME/zyc-clang/bin:$PATH"
           chmod +x build.sh tools/hostcc
-          bash build.sh ${{ matrix.device }} ${{ matrix.variant }} ${{ needs.setup.outputs.target_os }}
+          bash build.sh munch ${{ matrix.variant }} ${{ needs.setup.outputs.target_os }}
 
-      - name: Upload Flashable Zip Artifact
+      - name: 上传刷机包
         uses: actions/upload-artifact@v4
         with:
-          name: Ki-Kernel-${{ matrix.device }}-${{ matrix.variant }}-${{ needs.setup.outputs.target_os }}-${{ github.run_number }}
+          name: Ki-Kernel-munch-${{ matrix.variant }}-${{ needs.setup.outputs.target_os }}-${{ github.run_number }}
           path: |
             *.zip
             release/*.zip
           if-no-files-found: error
-
-      - name: Send Flashable Zip to Telegram
-        if: success()
-        env:
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID || '-1004420069477' }}
-          TG_TOPIC_ID: ${{ inputs.telegram_topic || secrets.TG_TOPIC_ID || '4' }}
-        run: |
-          pip install --break-system-packages telethon
-          python3 - << 'EOF'
-          import asyncio
-          import os
-          import glob
-          import hashlib
-          import base64
-          from telethon import TelegramClient
-
-          TELEGRAM_API_ID = 2040
-          TELEGRAM_API_HASH = "b18441a1ff607e10a989891a5462e627"
-
-          # Use secret if configured, else decode embedded token
-          BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
-          if not BOT_TOKEN:
-              BOT_TOKEN = base64.b64decode("OTEyNzM0MTUyNjpBQUhtWldWOVRyZ1FtNnIyR0hvay00cTNfZUdLT05ES0l3aw==").decode("utf-8")
-
-          CHAT_ID = int(os.environ.get("TG_CHAT_ID", "-1004420069477"))
-          RAW_TOPIC = os.environ.get("TG_TOPIC_ID", "4").strip()
-          TOPIC_ID = int(RAW_TOPIC) if RAW_TOPIC.isdigit() else 4
-
-          DEV_NAMES = {
-              "munch": "POCO F4 / Redmi K40S",
-              "alioth": "POCO F3 / Redmi K40",
-              "apollo": "Mi 10T / Mi 10T Pro",
-              "thyme": "Mi 10S",
-              "lmi": "POCO F2 Pro / Redmi K30 Pro",
-              "umi": "Mi 10",
-              "cmi": "Mi 10 Pro",
-              "cas": "Mi 10 Ultra",
-              "pipa": "Xiaomi Pad 6",
-              "psyche": "Xiaomi 12X",
-              "dagu": "Xiaomi Pad 5 Pro 12.4",
-              "elish": "Xiaomi Pad 5 Pro WiFi",
-              "enuma": "Xiaomi Pad 5 Pro 5G",
-          }
-
-          zips = glob.glob("*.zip") + glob.glob("release/*.zip")
-          if not zips:
-              print("No zip file found to upload.")
-              exit(1)
-
-          zip_file = max(zips, key=os.path.getmtime)
-          filename = os.path.basename(zip_file)
-          filesize_mb = os.path.getsize(zip_file) / (1024 * 1024)
-
-          h = hashlib.sha256()
-          with open(zip_file, "rb") as f:
-              while chunk := f.read(1024 * 1024 * 4):
-                  h.update(chunk)
-          sha256 = h.hexdigest()
-
-          device = "${{ matrix.device }}"
-          variant = "${{ matrix.variant }}"
-          target_os = "${{ needs.setup.outputs.target_os }}"
-          device_label = DEV_NAMES.get(device, device)
-          run_url = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          caption = (
-              f"🚀 *Ki-Kernel Build Released!*\n\n"
-              f"📱 *Device:* `{device}` ({device_label})\n"
-              f"🧩 *Variant:* `{variant}`\n"
-              f"🌐 *OS Target:* `{target_os}`\n"
-              f"📦 *File:* `{filename}`\n"
-              f"📊 *Size:* `{filesize_mb:.1f} MB`\n"
-              f"🔒 *SHA256:*\n`{sha256}`\n\n"
-              f"🔗 [GitHub Actions Run]({run_url})\n"
-              f"#kikernel #{device} #release"
-          )
-
-          async def main():
-              client = TelegramClient("gha_tg_session", TELEGRAM_API_ID, TELEGRAM_API_HASH)
-              await client.start(bot_token=BOT_TOKEN)
-
-              print(f"Mengunggah {filename} ({filesize_mb:.1f} MB) ke {CHAT_ID} (topik #{TOPIC_ID})...")
-              sent = False
-              try:
-                  await client.send_file(
-                      entity=CHAT_ID,
-                      file=zip_file,
-                      caption=caption,
-                      parse_mode="md",
-                      reply_to=TOPIC_ID
-                  )
-                  print(f"✅ Berhasil terkirim ke Telegram topik #{TOPIC_ID}!")
-                  sent = True
-              except Exception as e:
-                  print(f"⚠️ Gagal kirim ke topik #{TOPIC_ID}: {e}. Mencoba kirim tanpa reply_to...")
-                  try:
-                      await client.send_file(
-                          entity=CHAT_ID,
-                          file=zip_file,
-                          caption=caption,
-                          parse_mode="md"
-                      )
-                      print("✅ Berhasil terkirim ke Telegram!")
-                      sent = True
-                  except Exception as e2:
-                      print(f"⚠️ Gagal kirim tanpa topik: {e2}")
-
-              if not sent:
-                  print("⚠️ Gagal mengirim file ke Telegram, namun zip tetap tersimpan di GitHub Artifacts.")
-
-              await client.disconnect()
-
-          asyncio.run(main())
-          EOF
