@@ -282,12 +282,14 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
     apply_droidspaces_config
     make $MAKE_ARGS olddefconfig
     bash scripts/check-droidspaces-config.sh out/.config
+    bash scripts/check-module-abi.sh out/.config
     make $MAKE_ARGS KCFLAGS="-O2" -j$(nproc)
 
     if [ ! -f "out/arch/arm64/boot/Image" ]; then
         echo "Error: AOSP Image compilation failed."
         exit 1
     fi
+    bash scripts/check-module-abi.sh out/.config out/vmlinux
 
     echo "Compiling DTBs (GPU 保持默认频率表)..."
     rm -rf out/arch/arm64/boot/dts
@@ -346,7 +348,6 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
         -d LTO_CLANG \
         -d LOCALVERSION_AUTO \
         -e MODULE_FORCE_LOAD \
-        -d MODVERSIONS \
         -d MODULE_SIG \
         -d MODULE_SIG_ALL \
         -d MODULE_SIG_SHA512 \
@@ -360,12 +361,14 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
 
     make $MAKE_ARGS olddefconfig
     bash scripts/check-droidspaces-config.sh out/.config
+    bash scripts/check-module-abi.sh out/.config
     make $MAKE_ARGS KCFLAGS="-O2" -j$(nproc)
 
     if [ ! -f "out/arch/arm64/boot/Image" ]; then
         echo "Error: Image compilation failed."
         exit 1
     fi
+    bash scripts/check-module-abi.sh out/.config out/vmlinux
 
     echo "Compiling DTBs (GPU 保持默认频率表)..."
     rm -rf out/arch/arm64/boot/dts
