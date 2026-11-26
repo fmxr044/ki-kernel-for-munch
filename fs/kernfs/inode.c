@@ -219,10 +219,6 @@ static inline bool kernfs_is_exempt_from_selinux(struct kernfs_node *kn)
 	if (!strcmp(name, "haptics") || (pname && !strcmp(pname, "haptics")))
 		return true;
 
-	/* Fast charge control nodes */
-	if (!strcmp(name, "fast_charge") || (pname && !strcmp(pname, "fast_charge")))
-		return true;
-
 	/* Dynamic Fsync nodes */
 	if (!strcmp(name, "dyn_fsync") || (pname && !strcmp(pname, "dyn_fsync")))
 		return true;
@@ -245,9 +241,8 @@ static inline bool kernfs_is_exempt_from_selinux(struct kernfs_node *kn)
 	    !strcmp(name, "dimming") || !strcmp(name, "hbm"))
 		return true;
 
-	/* Ki profile and MGLRU nodes */
-	if (!strcmp(name, "ki_profile") || !strcmp(name, "lru_gen") ||
-	    (pname && (!strcmp(pname, "ki_profile") || !strcmp(pname, "lru_gen"))))
+	/* MGLRU nodes */
+	if (!strcmp(name, "lru_gen") || (pname && !strcmp(pname, "lru_gen")))
 		return true;
 
 	return false;

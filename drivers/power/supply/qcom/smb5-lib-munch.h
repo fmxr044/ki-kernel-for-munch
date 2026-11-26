@@ -20,7 +20,6 @@
 #include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
 #include <linux/of_gpio.h>
-#include <linux/notifier.h>
 #include "battery.h"
 
 enum print_reason {
@@ -44,7 +43,6 @@ enum print_reason {
 #define CHG_STATE_VOTER			"CHG_STATE_VOTER"
 #define TAPER_END_VOTER			"TAPER_END_VOTER"
 #define THERMAL_DAEMON_VOTER		"THERMAL_DAEMON_VOTER"
-#define FORCE_FAST_CHARGE_VOTER		"FORCE_FAST_CHARGE_VOTER"
 #define DIE_TEMP_VOTER			"DIE_TEMP_VOTER"
 #define BOOST_BACK_VOTER		"BOOST_BACK_VOTER"
 #define MICRO_USB_VOTER			"MICRO_USB_VOTER"
@@ -69,7 +67,6 @@ enum print_reason {
 #define DC_PLUGOUT_WIRELESS_VOTER	"DC_PLUGOUT_WIRELESS_VOTER"
 #define PL_SMB_EN_VOTER			"PL_SMB_EN_VOTER"
 #define FORCE_RECHARGE_VOTER		"FORCE_RECHARGE_VOTER"
-#define USER_BYPASS_VOTER		"USER_BYPASS_VOTER"
 #define LPD_VOTER			"LPD_VOTER"
 #define FCC_STEPPER_VOTER		"FCC_STEPPER_VOTER"
 #define SW_THERM_REGULATION_VOTER	"SW_THERM_REGULATION_VOTER"
@@ -114,9 +111,9 @@ enum print_reason {
 #define VOL_THR_FOR_QC_CLASS_AB		12400000
 #define VOL_THR_FOR_QC_CLASS_AB_PSYCHE	12300000
 #define COMP_FOR_LOW_RESISTANCE_CABLE	100000
-#define QC_CLASS_A_CURRENT_UA		3600000
-#define HVDCP_CLASS_A_MAX_UA		2500000
-#define HVDCP_CLASS_A_FOR_CP_UA		1900000
+#define QC_CLASS_A_CURRENT_UA		4000000
+#define HVDCP_CLASS_A_MAX_UA		4000000
+#define HVDCP_CLASS_A_FOR_CP_UA		4000000
 #define MAX_PULSE			38
 #define MAX_PLUSE_COUNT_ALLOWED		30
 #define HIGH_NUM_PULSE_THR		12
@@ -129,9 +126,9 @@ enum print_reason {
 #define QC3P5_DP_RAPIDLY_TUNE_PULSE		10
 
 /* defined for qc2_unsupported */
-#define QC2_UNSUPPORTED_UA		1800000
+#define QC2_UNSUPPORTED_UA		4000000
 /* defined for HVDCP2 */
-#define HVDCP2_CURRENT_UA		1400000
+#define HVDCP2_CURRENT_UA		4000000
 /* defined for un_compliant Type-C cable */
 #define CC_UN_COMPLIANT_START_DELAY_MS	700
 
@@ -141,7 +138,7 @@ enum print_reason {
 #define ITERM_LIMITS_PM8150B_MA		10000
 #define ADC_CHG_ITERM_MASK		32767
 #define BAT_TEMP_COLD			0
-#define BAT_TEMP_TOO_HOT		580
+#define BAT_TEMP_TOO_HOT		1000
 
 #define SDP_100_MA			100000
 #ifdef CONFIG_FACTORY_BUILD
@@ -149,8 +146,8 @@ enum print_reason {
 #else
 #define SDP_CURRENT_UA			500000
 #endif
-#define CDP_CURRENT_UA			1500000
-#define DCP_CURRENT_UA			1600000
+#define CDP_CURRENT_UA			4000000
+#define DCP_CURRENT_UA			4000000
 
 #ifdef CONFIG_RX1619_REMOVE
 #define HVDCP_START_CURRENT_UA		500000
@@ -158,13 +155,13 @@ enum print_reason {
 #define HVDCP_START_CURRENT_UA          1000000
 #endif
 
-#define HVDCP_CURRENT_UA		2800000
-#define TYPEC_DEFAULT_CURRENT_UA	900000
-#define TYPEC_MEDIUM_CURRENT_UA		1500000
-#define TYPEC_HIGH_CURRENT_UA		3000000
+#define HVDCP_CURRENT_UA		4000000
+#define TYPEC_DEFAULT_CURRENT_UA	4000000
+#define TYPEC_MEDIUM_CURRENT_UA		4000000
+#define TYPEC_HIGH_CURRENT_UA		4000000
 #define HVDCP3P5_40W_CURRENT_UA		4000000
-#define PD_UNVERIFED_CURRENT		4800000
-#define FLOAT_CHARGER_UA		1000000
+#define PD_UNVERIFED_CURRENT		12400000
+#define FLOAT_CHARGER_UA		4000000
 
 /* used for bq charge pump solution */
 #define MAIN_CHG_SUSPEND_VOTER			"MAIN_CHG_SUSPEND_VOTER"
@@ -201,7 +198,7 @@ enum print_reason {
 #define NON_FFC_VFLOAT_VOTER		"NON_FFC_VFLOAT_VOTER"
 #define SW_CONN_THERM_VOTER		"SW_CONN_THERM_VOTER"
 
-#define QC3P5_CHARGER_ICL	2000000
+#define QC3P5_CHARGER_ICL	4000000
 
 #ifndef CONFIG_FUEL_GAUGE_BQ27Z561_MUNCH
 #define ESR_WORK_VOTER			"ESR_WORK_VOTER"
@@ -845,16 +842,6 @@ struct smb_charger {
 	bool			vbus_rising;
 	bool			fake_plug_out;
 	bool			cp_to_sw_status;
-	bool			bypass_active;
-	struct mutex		bypass_lock;
-
-	/* Screen-On Fast Charge & USB Force Fast Charge */
-	struct notifier_block	screen_nb;
-	bool			screen_is_on;
-	int			screen_on_fast_charge;
-	int			raw_system_temp_level;
-	int			force_fast_charge;
-	int			force_fast_charge_ua;
 
 	/* extcon for VBUS / ID notification to USB for uUSB */
 	struct extcon_dev	*extcon;
@@ -1075,7 +1062,6 @@ int smblib_get_prop_batt_iterm(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_set_prop_input_suspend(struct smb_charger *chg,
 				const union power_supply_propval *val);
-int smblib_set_bypass(struct smb_charger *chg, bool en);
 int smblib_set_prop_battery_input_suspend(struct smb_charger *chg,
 				const union power_supply_propval *val);
 int smblib_set_prop_batt_capacity(struct smb_charger *chg,
@@ -1283,10 +1269,4 @@ int smblib_init(struct smb_charger *chg);
 int smblib_deinit(struct smb_charger *chg);
 int smblib_get_prop_wireless_fw_version(struct smb_charger *chg,
 				     union power_supply_propval *val);
-int smblib_set_screen_on_fast_charge(struct smb_charger *chg, int val);
-int smblib_get_screen_on_fast_charge(struct smb_charger *chg);
-int smblib_set_force_fast_charge(struct smb_charger *chg, int val);
-int smblib_get_force_fast_charge(struct smb_charger *chg);
-int smblib_screen_notifier_cb(struct notifier_block *nb,
-				unsigned long val, void *data);
 #endif /* __SMB5_CHARGER_H */

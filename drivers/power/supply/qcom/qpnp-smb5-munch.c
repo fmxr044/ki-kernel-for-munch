@@ -20,9 +20,6 @@
 #include <linux/iio/consumer.h>
 #include <linux/pmic-voter.h>
 #include <linux/usb/typec.h>
-#include <linux/kobject.h>
-#include <linux/proc_fs.h>
-#include <drm/drm_notifier_mi.h>
 #include "smb5-reg.h"
 #include "smb5-lib-munch.h"
 #include "step-chg-jeita.h"
@@ -307,12 +304,8 @@ static ssize_t thermal_fcc_override_store(struct device *dev, struct device_attr
 		return -EINVAL;
 
 	chg->thermal_fcc_override = val;
-	if (chg->fcc_votable) {
-		if (val > 0)
-			vote(chg->fcc_votable, THERMAL_FCC_OVERRIDE_VOTER, true, val);
-		else
-			vote(chg->fcc_votable, THERMAL_FCC_OVERRIDE_VOTER, false, 0);
-	}
+	if (chg->fcc_votable && chg->thermal_fcc_override > 0)
+		vote(chg->fcc_votable, THERMAL_FCC_OVERRIDE_VOTER, true, val);
 	return count;
 }
 
@@ -1644,7 +1637,7 @@ static int smb5_usb_get_prop(struct power_supply *psy,
 		val->intval = smblib_get_fastcharge_mode(chg);
 		break;
 	case POWER_SUPPLY_PROP_PD_AUTHENTICATION:
-		val->intval = 1;
+		val->intval = chg->pd_verifed;
 		break;
 	case POWER_SUPPLY_PROP_ADAPTER_CC_MODE:
 		val->intval = chg->adapter_cc_mode;
@@ -2072,10 +2065,7 @@ static int smb5_usb_main_get_prop(struct power_supply *psy,
 		break;
 	/* Use this property to report SMB health */
 	case POWER_SUPPLY_PROP_HEALTH:
-		val->intval = smblib_get_prop_smb_health(chg);
-		if (val->intval < 0)
-			val->intval = POWER_SUPPLY_HEALTH_UNKNOWN;
-		rc = 0;
+		rc = val->intval = smblib_get_prop_smb_health(chg);
 		break;
 	/* Use this property to report overheat status */
 	case POWER_SUPPLY_PROP_HOT_TEMP:
@@ -3036,7 +3026,6 @@ static enum power_supply_property smb5_batt_props[] = {
 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 	POWER_SUPPLY_PROP_TIME_TO_FULL_NOW,
 	POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE,
-	POWER_SUPPLY_PROP_CHARGING_ENABLED,
 	POWER_SUPPLY_PROP_BATTERY_CHARGING_ENABLED,
 	POWER_SUPPLY_PROP_DP_DM_BQ,
 	POWER_SUPPLY_PROP_TYPE_RECHECK,
@@ -3211,7 +3200,6 @@ static int smb5_batt_get_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE:
 		val->intval = chg->fcc_stepper_enable;
 		break;
-	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
 	case POWER_SUPPLY_PROP_BATTERY_CHARGING_ENABLED:
 		rc = smblib_get_prop_battery_charging_enabled(chg, val);
 		break;
@@ -3350,7 +3338,6 @@ static int smb5_batt_set_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE:
 		chg->fcc_stepper_enable = val->intval;
 		break;
-	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
 	case POWER_SUPPLY_PROP_BATTERY_CHARGING_ENABLED:
 		rc = smblib_set_prop_battery_charging_enabled(chg, val);
 		break;
@@ -3390,7 +3377,6 @@ static int smb5_batt_prop_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_STEP_CHARGING_ENABLED:
 	case POWER_SUPPLY_PROP_SW_JEITA_ENABLED:
 	case POWER_SUPPLY_PROP_DIE_HEALTH:
-	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
 	case POWER_SUPPLY_PROP_BATTERY_CHARGING_ENABLED:
 	case POWER_SUPPLY_PROP_DP_DM_BQ:
 	case POWER_SUPPLY_PROP_TYPE_RECHECK:
@@ -3408,355 +3394,6 @@ static int smb5_batt_prop_is_writeable(struct power_supply *psy,
 
 	return 0;
 }
-
-static ssize_t bypass_charging_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct power_supply *psy = to_power_supply(dev);
-	struct smb_charger *chg = power_supply_get_drvdata(psy);
-
-	if (!chg)
-		return -ENODEV;
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n", chg->bypass_active ? 1 : 0);
-}
-
-static ssize_t bypass_charging_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct power_supply *psy = to_power_supply(dev);
-	struct smb_charger *chg = power_supply_get_drvdata(psy);
-	int val, rc;
-
-	if (!chg)
-		return -ENODEV;
-
-	if (kstrtoint(buf, 10, &val))
-		return -EINVAL;
-
-	rc = smblib_set_bypass(chg, !!val);
-	if (rc < 0)
-		return rc;
-
-	return count;
-}
-static DEVICE_ATTR_RW(bypass_charging);
-
-/*
- * Non-root userspace control interface via /proc/bypass_charging
- * Allows Termux, Tasker, shell scripts, and unprivileged apps to toggle bypass mode.
- */
-static ssize_t bypass_proc_read(struct file *file, char __user *buf,
-		size_t count, loff_t *ppos)
-{
-	char kbuf[8];
-	int len;
-	bool active = false;
-
-	if (__smbchg)
-		active = __smbchg->bypass_active;
-
-	len = snprintf(kbuf, sizeof(kbuf), "%d\n", active ? 1 : 0);
-	return simple_read_from_buffer(buf, count, ppos, kbuf, len);
-}
-
-static ssize_t bypass_proc_write(struct file *file, const char __user *buf,
-		size_t count, loff_t *ppos)
-{
-	char kbuf[16];
-	size_t copy_len = min(count, sizeof(kbuf) - 1);
-	int val, rc;
-
-	if (!__smbchg)
-		return -ENODEV;
-
-	if (copy_from_user(kbuf, buf, copy_len))
-		return -EFAULT;
-	kbuf[copy_len] = '\0';
-
-	if (kstrtoint(strim(kbuf), 10, &val))
-		return -EINVAL;
-
-	rc = smblib_set_bypass(__smbchg, !!val);
-	if (rc < 0)
-		return rc;
-
-	return count;
-}
-
-static const struct file_operations bypass_proc_fops = {
-	.owner = THIS_MODULE,
-	.read = bypass_proc_read,
-	.write = bypass_proc_write,
-	.llseek = default_llseek,
-};
-
-/*
- * Non-root userspace control interface via /proc/fast_charge
- * Allows Termux, Tasker, shell scripts, and unprivileged apps to toggle fast charge mode.
- */
-static ssize_t fast_charge_proc_read(struct file *file, char __user *buf,
-		size_t count, loff_t *ppos)
-{
-	char kbuf[16];
-	int len;
-	int val = 0;
-
-	if (*ppos != 0)
-		return 0;
-
-	if (__smbchg)
-		val = smblib_get_force_fast_charge(__smbchg);
-
-	len = scnprintf(kbuf, sizeof(kbuf), "%d\n", val);
-	if (copy_to_user(buf, kbuf, len))
-		return -EFAULT;
-
-	*ppos += len;
-	return len;
-}
-
-static ssize_t fast_charge_proc_write(struct file *file, const char __user *buf,
-		size_t count, loff_t *ppos)
-{
-	char kbuf[16];
-	int val, rc;
-
-	if (count >= sizeof(kbuf))
-		return -EINVAL;
-
-	if (copy_from_user(kbuf, buf, count))
-		return -EFAULT;
-
-	kbuf[count] = '\0';
-	if (kstrtoint(strim(kbuf), 10, &val))
-		return -EINVAL;
-
-	if (!__smbchg)
-		return -ENODEV;
-
-	rc = smblib_set_force_fast_charge(__smbchg, val);
-	if (rc < 0)
-		return rc;
-
-	return count;
-}
-
-static const struct file_operations fast_charge_proc_fops = {
-	.owner = THIS_MODULE,
-	.read = fast_charge_proc_read,
-	.write = fast_charge_proc_write,
-	.llseek = default_llseek,
-};
-
-#define KI_CHARGING_LIMIT_VOTER "KI_CHARGING_LIMIT_VOTER"
-
-static ssize_t battery_health_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct power_supply *psy = to_power_supply(dev);
-	struct smb_charger *chg = power_supply_get_drvdata(psy);
-	union power_supply_propval pval = {0, };
-	int rc = 0;
-
-	if (!chg)
-		return -ENODEV;
-
-	if (!chg->bms_psy)
-		chg->bms_psy = power_supply_get_by_name("bms");
-
-	if (chg->bms_psy) {
-		rc = power_supply_get_property(chg->bms_psy, POWER_SUPPLY_PROP_SOH, &pval);
-		if (!rc && pval.intval > 0)
-			return scnprintf(buf, PAGE_SIZE, "%d\n", pval.intval);
-	}
-
-	return scnprintf(buf, PAGE_SIZE, "100\n");
-}
-static DEVICE_ATTR_RO(battery_health);
-
-static ssize_t battery_cycle_count_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct power_supply *psy = to_power_supply(dev);
-	struct smb_charger *chg = power_supply_get_drvdata(psy);
-	union power_supply_propval pval = {0, };
-	int rc = 0;
-
-	if (!chg)
-		return -ENODEV;
-
-	if (!chg->bms_psy)
-		chg->bms_psy = power_supply_get_by_name("bms");
-
-	if (chg->bms_psy) {
-		rc = power_supply_get_property(chg->bms_psy, POWER_SUPPLY_PROP_CYCLE_COUNT, &pval);
-		if (!rc)
-			return scnprintf(buf, PAGE_SIZE, "%d\n", pval.intval);
-	}
-
-	return scnprintf(buf, PAGE_SIZE, "0\n");
-}
-static DEVICE_ATTR_RO(battery_cycle_count);
-
-static ssize_t charging_limit_current_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct power_supply *psy = to_power_supply(dev);
-	struct smb_charger *chg = power_supply_get_drvdata(psy);
-	int effective_ua;
-
-	if (!chg)
-		return -ENODEV;
-
-	if (!chg->fcc_votable)
-		return scnprintf(buf, PAGE_SIZE, "0\n");
-
-	if (is_client_vote_enabled(chg->fcc_votable, KI_CHARGING_LIMIT_VOTER)) {
-		effective_ua = get_client_vote(chg->fcc_votable, KI_CHARGING_LIMIT_VOTER);
-	} else {
-		effective_ua = get_effective_result(chg->fcc_votable);
-	}
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n", effective_ua > 0 ? effective_ua / 1000 : 0);
-}
-
-static ssize_t charging_limit_current_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct power_supply *psy = to_power_supply(dev);
-	struct smb_charger *chg = power_supply_get_drvdata(psy);
-	int val;
-
-	if (!chg || !chg->fcc_votable)
-		return -ENODEV;
-
-	if (kstrtoint(buf, 10, &val))
-		return -EINVAL;
-
-	if (val <= 0) {
-		/* Disable custom limit, let normal fast charge policy take over */
-		vote(chg->fcc_votable, KI_CHARGING_LIMIT_VOTER, false, 0);
-	} else {
-		/* If input <= 15000 treat as mA, if > 15000 treat as uA */
-		int limit_ua = (val <= 15000) ? (val * 1000) : val;
-
-		limit_ua = min(limit_ua, 12000000); /* Clamp max 12A */
-		vote(chg->fcc_votable, KI_CHARGING_LIMIT_VOTER, true, limit_ua);
-	}
-
-	return count;
-}
-static DEVICE_ATTR_RW(charging_limit_current);
-
-static struct kobject *fast_charge_kobj;
-static struct smb_charger *g_smb_chg;
-
-static ssize_t screen_on_fast_charge_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct power_supply *psy = to_power_supply(dev);
-	struct smb_charger *chg = power_supply_get_drvdata(psy);
-
-	if (!chg)
-		return -ENODEV;
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n", smblib_get_screen_on_fast_charge(chg));
-}
-
-static ssize_t screen_on_fast_charge_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct power_supply *psy = to_power_supply(dev);
-	struct smb_charger *chg = power_supply_get_drvdata(psy);
-	int val;
-
-	if (!chg)
-		return -ENODEV;
-
-	if (kstrtoint(buf, 10, &val))
-		return -EINVAL;
-
-	smblib_set_screen_on_fast_charge(chg, val);
-
-	return count;
-}
-static DEVICE_ATTR_RW(screen_on_fast_charge);
-
-static ssize_t force_fast_charge_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct power_supply *psy = to_power_supply(dev);
-	struct smb_charger *chg = power_supply_get_drvdata(psy);
-
-	if (!chg)
-		return -ENODEV;
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n", smblib_get_force_fast_charge(chg));
-}
-
-static ssize_t force_fast_charge_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct power_supply *psy = to_power_supply(dev);
-	struct smb_charger *chg = power_supply_get_drvdata(psy);
-	int val;
-
-	if (!chg)
-		return -ENODEV;
-
-	if (kstrtoint(buf, 10, &val))
-		return -EINVAL;
-
-	smblib_set_force_fast_charge(chg, val);
-
-	return count;
-}
-static DEVICE_ATTR_RW(force_fast_charge);
-
-static ssize_t kobj_screen_on_fast_charge_show(struct kobject *kobj,
-		struct kobj_attribute *attr, char *buf)
-{
-	if (!g_smb_chg)
-		return -ENODEV;
-	return scnprintf(buf, PAGE_SIZE, "%d\n", smblib_get_screen_on_fast_charge(g_smb_chg));
-}
-
-static ssize_t kobj_screen_on_fast_charge_store(struct kobject *kobj,
-		struct kobj_attribute *attr, const char *buf, size_t count)
-{
-	int val;
-	if (!g_smb_chg)
-		return -ENODEV;
-	if (kstrtoint(buf, 10, &val))
-		return -EINVAL;
-	smblib_set_screen_on_fast_charge(g_smb_chg, val);
-	return count;
-}
-static struct kobj_attribute kobj_screen_on_fast_charge_attr =
-	__ATTR(screen_on_fast_charge, 0664, kobj_screen_on_fast_charge_show, kobj_screen_on_fast_charge_store);
-
-static ssize_t kobj_force_fast_charge_show(struct kobject *kobj,
-		struct kobj_attribute *attr, char *buf)
-{
-	if (!g_smb_chg)
-		return -ENODEV;
-	return scnprintf(buf, PAGE_SIZE, "%d\n", smblib_get_force_fast_charge(g_smb_chg));
-}
-
-static ssize_t kobj_force_fast_charge_store(struct kobject *kobj,
-		struct kobj_attribute *attr, const char *buf, size_t count)
-{
-	int val;
-	if (!g_smb_chg)
-		return -ENODEV;
-	if (kstrtoint(buf, 10, &val))
-		return -EINVAL;
-	smblib_set_force_fast_charge(g_smb_chg, val);
-	return count;
-}
-static struct kobj_attribute kobj_force_fast_charge_attr =
-	__ATTR(force_fast_charge, 0664, kobj_force_fast_charge_show, kobj_force_fast_charge_store);
 
 static const struct power_supply_desc batt_psy_desc = {
 	.name = "battery",
@@ -3784,54 +3421,7 @@ static int smb5_init_batt_psy(struct smb5 *chip)
 		return PTR_ERR(chg->batt_psy);
 	}
 
-	g_smb_chg = chg;
-	__smbchg = chg;
-
-	proc_create("bypass_charging", 0666, NULL, &bypass_proc_fops);
-	proc_create("fast_charge", 0666, NULL, &fast_charge_proc_fops);
-
-	chg->screen_nb.notifier_call = smblib_screen_notifier_cb;
-	rc = mi_drm_register_client(&chg->screen_nb);
-	if (rc < 0)
-		pr_err("Couldn't register screen_nb drm client, rc=%d\n", rc);
-
-	rc = device_create_file(&chg->batt_psy->dev, &dev_attr_bypass_charging);
-	if (rc < 0)
-		pr_err("Couldn't create bypass_charging sysfs node, rc=%d\n", rc);
-
-	rc = device_create_file(&chg->batt_psy->dev, &dev_attr_battery_health);
-	if (rc < 0)
-		pr_err("Couldn't create battery_health sysfs node, rc=%d\n", rc);
-
-	rc = device_create_file(&chg->batt_psy->dev, &dev_attr_battery_cycle_count);
-	if (rc < 0)
-		pr_err("Couldn't create battery_cycle_count sysfs node, rc=%d\n", rc);
-
-	rc = device_create_file(&chg->batt_psy->dev, &dev_attr_charging_limit_current);
-	if (rc < 0)
-		pr_err("Couldn't create charging_limit_current sysfs node, rc=%d\n", rc);
-
-	rc = device_create_file(&chg->batt_psy->dev, &dev_attr_screen_on_fast_charge);
-	if (rc < 0)
-		pr_err("Couldn't create screen_on_fast_charge sysfs node, rc=%d\n", rc);
-
-	rc = device_create_file(&chg->batt_psy->dev, &dev_attr_force_fast_charge);
-	if (rc < 0)
-		pr_err("Couldn't create force_fast_charge sysfs node, rc=%d\n", rc);
-
-	if (!fast_charge_kobj) {
-		fast_charge_kobj = kobject_create_and_add("fast_charge", kernel_kobj);
-		if (fast_charge_kobj) {
-			rc = sysfs_create_file(fast_charge_kobj, &kobj_screen_on_fast_charge_attr.attr);
-			if (rc < 0)
-				pr_err("Couldn't create sysfs screen_on_fast_charge under fast_charge kobj, rc=%d\n", rc);
-			rc = sysfs_create_file(fast_charge_kobj, &kobj_force_fast_charge_attr.attr);
-			if (rc < 0)
-				pr_err("Couldn't create sysfs force_fast_charge under fast_charge kobj, rc=%d\n", rc);
-		}
-	}
-
-	return 0;
+	return rc;
 }
 
 /******************************
@@ -5408,7 +4998,7 @@ static int smb5_init_typec_class(struct smb5 *chip)
 
 struct usbpd *smb_get_usbpd(void)
 {
-	return __smbchg ? __smbchg->pd : NULL;
+	return __smbchg->pd;
 }
 EXPORT_SYMBOL(smb_get_usbpd);
 
@@ -5649,7 +5239,6 @@ static int smb5_remove(struct platform_device *pdev)
 				BC1P2_SRC_DETECT_BIT, BC1P2_SRC_DETECT_BIT);
 
 	smb5_free_interrupts(chg);
-	mi_drm_unregister_client(&chg->screen_nb);
 	smblib_deinit(chg);
 	sysfs_remove_groups(&chg->dev->kobj, smb5_groups);
 	platform_set_drvdata(pdev, NULL);
@@ -5661,9 +5250,6 @@ static void smb5_shutdown(struct platform_device *pdev)
 {
 	struct smb5 *chip = platform_get_drvdata(pdev);
 	struct smb_charger *chg = &chip->chg;
-
-	if (chg->bypass_active)
-		smblib_set_bypass(chg, false);
 
 	/* disable all interrupts */
 	smb5_disable_interrupts(chg);

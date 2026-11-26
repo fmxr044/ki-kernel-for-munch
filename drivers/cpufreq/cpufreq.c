@@ -32,7 +32,6 @@
 #include <linux/tick.h>
 #include <linux/sched/topology.h>
 #include <linux/sched/sysctl.h>
-#include <linux/ki_profile.h>
 
 #include <trace/events/power.h>
 
@@ -753,53 +752,6 @@ static ssize_t store_scaling_min_freq
 	ret = sscanf(buf, "%u", &val);
 	if (ret != 1)
 		return -EINVAL;
-
-	/*
-	 * Kernel-level Idle Floor & Boost Management:
-	 *
-	 * 1. Battery Saver mode:
-	 *    Prevent userspace from inflating idle floor.
-	 *    Enforce true hardware minimums (Silver 300M, Gold 710.4M, Prime 844.8M).
-	 *
-	 * 2. Balanced mode:
-	 *    - Userspace ROM vendor scripts (post_boot.sh) and powerhint.json hardcode
-	 *      691.2 MHz as the lowest entry in CPULittleClusterMinFreq.
-	 *      When userspace resets its touch/launch boost or attempts to set idle floor
-	 *      (val <= 691200 on Little), map it to true hardware minimum (300 MHz)
-	 *      so Little cores can achieve deep sleep / idle without latency penalty.
-	 *    - Gold / Prime: val <= cpuinfo.min_freq maps to cpuinfo.min_freq.
-	 *    - Clamp maximum boost min_freq to prevent rogue daemons from pinning max clocks:
-	 *      Little (CPU 0-3): max min_freq 1.34 GHz (1344000 kHz)
-	 *      Gold   (CPU 4-6): max min_freq 1.05 GHz (1056000 kHz)
-	 *      Prime  (CPU 7):   max min_freq 844.8 MHz (844800 kHz)
-	 *
-	 * 3. Performance mode:
-	 *    Unrestricted turbo floor.
-	 */
-	{
-		int active_profile = ki_get_active_profile();
-
-		if (active_profile == KI_PROFILE_BATTERY) {
-			val = policy->cpuinfo.min_freq;
-		} else if (active_profile == KI_PROFILE_BALANCED) {
-			if (policy->cpu < 4) {
-				if (val <= 691200)
-					val = policy->cpuinfo.min_freq;
-				else if (val > 1344000)
-					val = 1344000;
-			} else if (policy->cpu < 7) {
-				if (val <= 710400)
-					val = policy->cpuinfo.min_freq;
-				else if (val > 1056000)
-					val = 1056000;
-			} else {
-				if (val <= 844800)
-					val = policy->cpuinfo.min_freq;
-				else if (val > 844800)
-					val = 844800;
-			}
-		}
-	}
 
 	new_policy.min = val;
 	temp = new_policy.min;
@@ -2466,119 +2418,6 @@ unlock:
 	cpufreq_cpu_put(policy);
 }
 EXPORT_SYMBOL(cpufreq_update_policy);
-
-/**
- * ki_cpufreq_reset_idle_floors - reset all policy min frequencies to hardware baseline
- * @mode: active Ki-Profile mode
- *
- * Ensures all clusters have their user_policy.min set to true hardware minimums
- * (Silver 300MHz, Gold 710.4MHz, Prime 844.8MHz) so processors can settle cleanly
- * into deep idle when untangled from userspace post_boot and boost daemons.
- *
- * Returns -EBUSY if a policy lock was contended and that cluster was skipped.
- */
-int ki_cpufreq_reset_idle_floors(int mode)
-{
-	struct cpufreq_policy *policy;
-	int ret = 0;
-
-	for_each_active_policy(policy) {
-		struct cpufreq_policy new_policy;
-
-		if (!down_write_trylock(&policy->rwsem)) {
-			ret = -EBUSY;
-			continue;
-		}
-		if (policy_is_inactive(policy)) {
-			up_write(&policy->rwsem);
-			continue;
-		}
-
-		memcpy(&new_policy, policy, sizeof(*policy));
-		policy->user_policy.min = policy->cpuinfo.min_freq;
-		new_policy.min = policy->cpuinfo.min_freq;
-		new_policy.max = policy->user_policy.max;
-
-		cpufreq_set_policy(policy, &new_policy);
-
-		up_write(&policy->rwsem);
-	}
-	return ret;
-}
-EXPORT_SYMBOL_GPL(ki_cpufreq_reset_idle_floors);
-
-/**
- * ki_cpufreq_set_limits - set min/max frequency limits for a CPU cluster
- * @cpu: representative CPU of the cluster
- * @min_freq: minimum frequency in kHz (0 = use hardware minimum)
- * @max_freq: maximum frequency in kHz (0 = use hardware maximum)
- */
-int ki_cpufreq_set_limits(unsigned int cpu, unsigned int min_freq, unsigned int max_freq)
-{
-	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
-	struct cpufreq_policy new_policy;
-
-	if (!policy)
-		return -ENODEV;
-
-	/* Prevent deadlocks with CPU hotplug / suspend threads holding policy->rwsem */
-	if (!down_write_trylock(&policy->rwsem)) {
-		cpufreq_cpu_put(policy);
-		return -EBUSY;
-	}
-	if (policy_is_inactive(policy)) {
-		up_write(&policy->rwsem);
-		cpufreq_cpu_put(policy);
-		return -EINVAL;
-	}
-
-	memcpy(&new_policy, policy, sizeof(*policy));
-	if (min_freq) {
-		policy->user_policy.min = max(min_freq, policy->cpuinfo.min_freq);
-		new_policy.min = policy->user_policy.min;
-	} else {
-		policy->user_policy.min = policy->cpuinfo.min_freq;
-		new_policy.min = policy->cpuinfo.min_freq;
-	}
-
-	if (max_freq) {
-		policy->user_policy.max = min(max_freq, policy->cpuinfo.max_freq);
-		new_policy.max = policy->user_policy.max;
-	} else {
-		policy->user_policy.max = policy->cpuinfo.max_freq;
-		new_policy.max = policy->cpuinfo.max_freq;
-	}
-
-	/* Fast path: if limits and governor are identical, skip heavy blocking cpufreq_set_policy */
-	if (new_policy.min == policy->min && new_policy.max == policy->max &&
-	    new_policy.governor == policy->governor) {
-		up_write(&policy->rwsem);
-		cpufreq_cpu_put(policy);
-		return 0;
-	}
-
-	cpufreq_set_policy(policy, &new_policy);
-
-	up_write(&policy->rwsem);
-	cpufreq_cpu_put(policy);
-	return 0;
-}
-EXPORT_SYMBOL_GPL(ki_cpufreq_set_limits);
-
-unsigned int ki_cpufreq_get_max(unsigned int cpu)
-{
-	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
-	unsigned int max_freq = 0;
-
-	if (policy) {
-		down_read(&policy->rwsem);
-		max_freq = policy->user_policy.max;
-		up_read(&policy->rwsem);
-		cpufreq_cpu_put(policy);
-	}
-	return max_freq;
-}
-EXPORT_SYMBOL_GPL(ki_cpufreq_get_max);
 
 /*********************************************************************
  *               BOOST						     *

@@ -14,7 +14,6 @@
 #include <linux/input.h>
 #include <linux/time.h>
 #include <linux/sysfs.h>
-#include <linux/ki_profile.h>
 
 #define cpu_boost_attr_rw(_name)		\
 static struct kobj_attribute _name##_attr =	\
@@ -297,13 +296,6 @@ static void acquire_sched_boost(int type)
 		pr_err("cpu-boost: sched boost enable failed\n");
 	else
 		sched_boost_active = type;
-}
-
-/* Called by ki_profile on every profile apply (0 disables touch sched boost) */
-void cpu_boost_set_input_sched_boost(unsigned int type, unsigned int hold_ms)
-{
-	WRITE_ONCE(sched_boost_on_input, type);
-	WRITE_ONCE(sched_boost_hold_ms, hold_ms);
 }
 
 static void do_input_boost_rem(struct work_struct *work)

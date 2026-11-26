@@ -9,7 +9,6 @@
 #include <linux/cpu.h>
 #include <linux/of_device.h>
 #include <linux/suspend.h>
-#include <linux/ki_profile.h>
 
 #define CPU_ISOLATE_LEVEL 1
 
@@ -174,16 +173,6 @@ static int cpu_isolate_set_cur_state(struct thermal_cooling_device *cdev,
 		return -EINVAL;
 
 	state = !!state;
-	/*
-	 * Ki-Kernel Anti-Stutter (Option A):
-	 * Never isolate CPU cores in Balanced or Performance mode.
-	 * Offlining Big/Prime cores drops display refresh to 30 FPS and causes
-	 * severe UI/video stutter when watching YouTube outdoors with high brightness.
-	 * Thermal safety is instead maintained through cpufreq frequency scaling.
-	 */
-	if (unlikely(state > 0 && (!ki_thermal_throttle_enabled || ki_get_active_profile() >= KI_PROFILE_BALANCED)))
-		return 0;
-
 	/* Check if the old cooling action is same as new cooling action */
 	if (cpu_isolate_cdev->cpu_isolate_state == state)
 		return 0;
