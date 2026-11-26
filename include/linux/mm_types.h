@@ -2,6 +2,7 @@
 #ifndef _LINUX_MM_TYPES_H
 #define _LINUX_MM_TYPES_H
 
+#include <linux/build_bug.h>
 #include <linux/mm_types_task.h>
 #include <linux/sched.h>
 
@@ -375,6 +376,17 @@ struct mm_struct {
 		u64 vmacache_seqnum;                   /* per-thread vmacache */
 #ifdef CONFIG_SPECULATIVE_PAGE_FAULT
 		rwlock_t mm_rb_lock;	/* Speculative page fault field */
+#else
+		/*
+		 * 原厂 4.19.157 内核开了 SPECULATIVE_PAGE_FAULT，这个位置是一个
+		 * 8 字节的 rwlock_t，所以 ->pgd 稳定落在 0x48。
+		 *
+		 * vendor 分区里的 .ko 是按原厂布局编的，读 ->pgd 用的是写死的 0x48。
+		 * 本树如果没开这个选项，这里就少 8 字节，->pgd 会挪到 0x40，
+		 * 模块读到的其实是 highest_vm_end 之类的值，当成页表基址用会当场 panic。
+		 * 补 8 字节占位，把偏移钉死在 0x48。
+		 */
+		u64 __kabi_pad_mm_rb_lock;
 #endif
 #ifdef CONFIG_MMU
 		unsigned long (*get_unmapped_area) (struct file *filp,
@@ -546,6 +558,13 @@ struct mm_struct {
 	 */
 	unsigned long cpu_bitmap[];
 };
+
+/*
+ * KABI 保护：原厂 4.19.157 的 mm_struct->pgd 固定在 0x48，vendor 分区里的
+ * .ko 是按这个偏移编译的。偏移一旦漂移，让 CI 直接编译失败，别等刷到手机上 panic。
+ */
+static_assert(offsetof(struct mm_struct, pgd) == 0x48,
+	      "mm_struct->pgd 必须在 0x48（与 4.19.157 原厂布局一致），否则 vendor 模块会读到错的页表指针");
 
 extern struct mm_struct init_mm;
 
