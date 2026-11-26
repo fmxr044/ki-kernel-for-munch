@@ -255,21 +255,10 @@ apply_droidspaces_config() {
 }
 
 echo "Cleaning build directories..."
-rm -rf out/ anykernel/
+rm -rf out/ anykernel/ pkg/ release/ 2>/dev/null || true
 rm -rf include/config include/generated arch/*/include/generated .config 2>/dev/null || true
 rm -rf build_artifacts 2>/dev/null || true
 mkdir -p build_artifacts/aosp build_artifacts/miui
-
-echo "Setting up AnyKernel3..."
-if [ -d "../AnyKernel3" ]; then
-    echo "Using local AnyKernel3 (../AnyKernel3)..."
-    rm -rf anykernel/
-    cp -r ../AnyKernel3 anykernel
-    rm -f anykernel/MUNCH-* anykernel/*.zip 2>/dev/null || true
-else
-    git clone https://github.com/kvsnr113/AnyKernel3 -b master --single-branch --depth=1 anykernel || \
-    git clone https://github.com/osm0sis/AnyKernel3 -b master --single-branch --depth=1 anykernel
-fi
 
 local_version_date_str="-${KERNEL_NAME}-${KERNEL_VERSION}"
 sed -i "s/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=\"${local_version_date_str}\"/" arch/arm64/configs/${TARGET_DEVICE}_defconfig
@@ -300,29 +289,18 @@ if [ "$TARGET_OS" == "aosp" ] || [ "$TARGET_OS" == "both" ] || [ "$TARGET_OS" ==
         exit 1
     fi
 
-    echo "Compiling DTBs (Extreme UV + OC 683 MHz)..."
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
+    echo "Compiling DTBs (GPU 保持默认频率表)..."
     rm -rf out/arch/arm64/boot/dts
     make $MAKE_ARGS dtbs -j$(nproc)
     if [ -f "out/arch/arm64/boot/dts/vendor/qcom/kona-v2.1.dtb" ]; then
-        cp out/arch/arm64/boot/dts/vendor/qcom/kona-v2.1.dtb build_artifacts/aosp/dtb_oc
+        cp out/arch/arm64/boot/dts/vendor/qcom/kona-v2.1.dtb build_artifacts/aosp/dtb
     else
-        find out/arch/arm64/boot/dts -name '*.dtb' | sort | head -n 1 | xargs cat > build_artifacts/aosp/dtb_oc
+        echo "Error: kona-v2.1.dtb 未生成。"
+        exit 1
     fi
-
-    echo "Compiling DTBs (Stock 670 MHz + Safe Voltage)..."
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-stock.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
-    rm -rf out/arch/arm64/boot/dts
-    make $MAKE_ARGS dtbs -j$(nproc)
-    if [ -f "out/arch/arm64/boot/dts/vendor/qcom/kona-v2.1.dtb" ]; then
-        cp out/arch/arm64/boot/dts/vendor/qcom/kona-v2.1.dtb build_artifacts/aosp/dtb_stock
-    else
-        find out/arch/arm64/boot/dts -name '*.dtb' | sort | head -n 1 | xargs cat > build_artifacts/aosp/dtb_stock
-    fi
-    cp build_artifacts/aosp/dtb_stock build_artifacts/aosp/dtb
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
 
     cp out/arch/arm64/boot/Image build_artifacts/aosp/Image
+    gzip -9 -n -c build_artifacts/aosp/Image > build_artifacts/aosp/Image.gz
     echo ">>> AOSP Build Done! <<<"
 fi
 
@@ -389,29 +367,18 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
         exit 1
     fi
 
-    echo "Compiling DTBs (Extreme UV + OC 683 MHz)..."
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
+    echo "Compiling DTBs (GPU 保持默认频率表)..."
     rm -rf out/arch/arm64/boot/dts
     make $MAKE_ARGS dtbs -j$(nproc)
     if [ -f "out/arch/arm64/boot/dts/vendor/qcom/kona-v2.1.dtb" ]; then
-        cp out/arch/arm64/boot/dts/vendor/qcom/kona-v2.1.dtb build_artifacts/miui/dtb_oc
+        cp out/arch/arm64/boot/dts/vendor/qcom/kona-v2.1.dtb build_artifacts/miui/dtb
     else
-        find out/arch/arm64/boot/dts -name '*.dtb' | sort | head -n 1 | xargs cat > build_artifacts/miui/dtb_oc
+        echo "Error: kona-v2.1.dtb 未生成。"
+        exit 1
     fi
-
-    echo "Compiling DTBs (Stock 670 MHz + Safe Voltage)..."
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-stock.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
-    rm -rf out/arch/arm64/boot/dts
-    make $MAKE_ARGS dtbs -j$(nproc)
-    if [ -f "out/arch/arm64/boot/dts/vendor/qcom/kona-v2.1.dtb" ]; then
-        cp out/arch/arm64/boot/dts/vendor/qcom/kona-v2.1.dtb build_artifacts/miui/dtb_stock
-    else
-        find out/arch/arm64/boot/dts -name '*.dtb' | sort | head -n 1 | xargs cat > build_artifacts/miui/dtb_stock
-    fi
-    cp build_artifacts/miui/dtb_stock build_artifacts/miui/dtb
-    cp -f arch/arm64/boot/dts/gpu_profiles/kona-v2-gpu-extreme.dtsi arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
 
     cp out/arch/arm64/boot/Image build_artifacts/miui/Image
+    gzip -9 -n -c build_artifacts/miui/Image > build_artifacts/miui/Image.gz
     if [ "$TARGET_OS" == "coloros" ]; then
         echo ">>> ColorOS / OxygenOS Build Done! <<<"
     else
@@ -420,78 +387,52 @@ if [ "$TARGET_OS" == "miui" ] || [ "$TARGET_OS" == "coloros" ] || [ "$TARGET_OS"
 fi
 
 # ------------------------------------------------------------
-# PACKAGING ANYKERNEL3
+# PACKAGING (纯 Image.gz + dtb，不含 AnyKernel3)
 # ------------------------------------------------------------
 echo ""
-echo ">>> Packaging AnyKernel3 Flashable Zip <<<"
-rm -rf anykernel/kernels/ anykernel/dtbs/ anykernel/Image anykernel/dtb anykernel/dtb_oc anykernel/dtb_stock anykernel/dtbo.img 2>/dev/null
+echo ">>> Packaging Image.gz + dtb <<<"
+
+package_images() {
+    local src_dir="$1"
+    local os_tag="$2"
+
+    if [ ! -s "build_artifacts/$src_dir/Image.gz" ] || [ ! -s "build_artifacts/$src_dir/dtb" ]; then
+        echo "Error: build_artifacts/$src_dir 缺少 Image.gz 或 dtb，打包中止。"
+        exit 1
+    fi
+
+    local stage="pkg/$os_tag"
+    rm -rf "$stage"
+    mkdir -p "$stage"
+    cp -f "build_artifacts/$src_dir/Image.gz" "$stage/Image.gz"
+    cp -f "build_artifacts/$src_dir/dtb" "$stage/dtb"
+
+    local zip_name="${VARIANT_TAG}_Ki-kernel-${os_tag}-${KERNEL_VERSION}_${TARGET_DEVICE}_${BUILD_DATETIME}_${GIT_HASH}.zip"
+    ( cd "$stage" && zip -9 -q "$zip_name" Image.gz dtb )
+
+    mkdir -p release
+    mv -f "$stage/$zip_name" "release/$zip_name"
+
+    echo "Package ready: release/$zip_name"
+    echo "  Image.gz : $(du -h "build_artifacts/$src_dir/Image.gz" | cut -f1)"
+    echo "  dtb      : $(du -h "build_artifacts/$src_dir/dtb" | cut -f1)"
+    echo "  sha256   : $(sha256sum "release/$zip_name" | cut -d' ' -f1)"
+}
 
 if [ "$TARGET_OS" == "aosp" ]; then
-    mkdir -p anykernel/kernels/aosp/
-    cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
-    cp build_artifacts/aosp/dtb anykernel/kernels/aosp/dtb
-    cp build_artifacts/aosp/dtb_oc anykernel/dtb_oc
-    cp build_artifacts/aosp/dtb_stock anykernel/dtb_stock
-    cp build_artifacts/aosp/dtb anykernel/dtb
+    package_images aosp AOSP
 elif [ "$TARGET_OS" == "miui" ]; then
-    mkdir -p anykernel/kernels/miui/
-    cp build_artifacts/miui/Image anykernel/kernels/miui/Image
-    cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
-    cp build_artifacts/miui/dtb_oc anykernel/dtb_oc
-    cp build_artifacts/miui/dtb_stock anykernel/dtb_stock
-    cp build_artifacts/miui/dtb anykernel/dtb
+    package_images miui MIUI
 elif [ "$TARGET_OS" == "coloros" ]; then
-    mkdir -p anykernel/kernels/coloros/
-    cp build_artifacts/miui/Image anykernel/kernels/coloros/Image
-    cp build_artifacts/miui/dtb anykernel/kernels/coloros/dtb
-    cp build_artifacts/miui/Image anykernel/Image
-    cp build_artifacts/miui/dtb_oc anykernel/dtb_oc
-    cp build_artifacts/miui/dtb_stock anykernel/dtb_stock
-    cp build_artifacts/miui/dtb anykernel/dtb
+    package_images miui ColorOS
 else
-    mkdir -p anykernel/kernels/aosp/ anykernel/kernels/miui/ anykernel/kernels/coloros/
-    cp build_artifacts/aosp/Image anykernel/kernels/aosp/Image
-    cp build_artifacts/aosp/dtb anykernel/kernels/aosp/dtb
-    cp build_artifacts/miui/Image anykernel/kernels/miui/Image
-    cp build_artifacts/miui/dtb anykernel/kernels/miui/dtb
-    cp build_artifacts/miui/Image anykernel/kernels/coloros/Image
-    cp build_artifacts/miui/dtb anykernel/kernels/coloros/dtb
-    cp build_artifacts/miui/dtb_oc anykernel/dtb_oc
-    cp build_artifacts/miui/dtb_stock anykernel/dtb_stock
-    cp build_artifacts/miui/dtb anykernel/dtb
+    package_images aosp AOSP
+    package_images miui MIUI
 fi
 
-# DO NOT include dtbo (preserve panel/touch drivers from ROM)
-rm -f anykernel/dtbo.img anykernel/kernels/dtbo.img anykernel/kernels/*/*.img 2>/dev/null
-cp -f anykernel_template/anykernel.sh anykernel/anykernel.sh
-sed -i "s/| munch /| ${TARGET_DEVICE} /g" anykernel/anykernel.sh
-[ -d anykernel_template/tools ] && cp -rf anykernel_template/tools/* anykernel/tools/ 2>/dev/null || true
-
-cd anykernel
-
-if [ "$TARGET_OS" == "aosp" ]; then
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-AOSP-${KERNEL_VERSION}_${TARGET_DEVICE}_${BUILD_DATETIME}_${GIT_HASH}.zip"
-elif [ "$TARGET_OS" == "miui" ]; then
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-MIUI-${KERNEL_VERSION}_${TARGET_DEVICE}_${BUILD_DATETIME}_${GIT_HASH}.zip"
-elif [ "$TARGET_OS" == "coloros" ]; then
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-ColorOS-${KERNEL_VERSION}_${TARGET_DEVICE}_${BUILD_DATETIME}_${GIT_HASH}.zip"
-else
-    ZIP_FILENAME="${VARIANT_TAG}_Ki-kernel-Universal-${KERNEL_VERSION}_${TARGET_DEVICE}_${BUILD_DATETIME}_${GIT_HASH}.zip"
-fi
-
-zip -r9 "$ZIP_FILENAME" ./* -x .git .gitignore out/ ./*.zip
-mkdir -p ../release
-cp -f "$ZIP_FILENAME" ../release/
-mkdir -p ../../release 2>/dev/null || true
-cp -f "$ZIP_FILENAME" ../../release/ 2>/dev/null || true
-cp -f "$ZIP_FILENAME" /home/kiki/Unduhan/ 2>/dev/null || true
-cp -f "$ZIP_FILENAME" /home/kiki/Downloads/ 2>/dev/null || true
-mv "$ZIP_FILENAME" ../
-cd ..
-
-rm -rf build_artifacts 2>/dev/null || true
+rm -rf pkg
 
 echo "=========================================================="
 echo "Build Finished Successfully!"
-echo "Flashable Zip: [./$ZIP_FILENAME]"
+ls -l release/*.zip
 echo "=========================================================="
