@@ -1770,7 +1770,9 @@ static int __do_execve_file(int fd, struct filename *filename,
 	struct linux_binprm *bprm;
 	struct files_struct *displaced;
 	int retval;
-
+#if defined(CONFIG_KSU_MANUAL_HOOK)
+	bool is_su_session = false;
+#endif
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
